@@ -24,3 +24,10 @@ def add_catch(db, user_id, pokemon_id, pokemon_name):
     user_ref.set({
         "catch_count": firestore.Increment(1)
     },merge=True)
+
+def get_pokedex(db, user_id):
+    catches = db.collection("users").document(str(user_id)).collection("pokedex").stream()
+
+    return sorted([(int(doc.id), doc.to_dict()["pokemon_name"]) 
+                   for doc in catches],
+                        key=lambda entry: entry[0])
