@@ -3,7 +3,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from database import init_db, has_caught, add_catch, get_pokedex, get_leaderboard
 from pokeapi import get_pokemon_data, get_capture_rate
-
+import asyncio
 
 load_dotenv()
 Token = os.getenv("DISCORD_TOKEN")
@@ -13,6 +13,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+CATCH_WINDOW = 15
 
 @bot.event
 async def on_ready():
@@ -52,8 +54,20 @@ async def skip(ctx):
     else:
         await ctx.send("Nothing is spawned right now.")
 
+async def resolve_pool(channel, pokemon_id):
+    await asyncio.sleep(CATCH_WINDOW)
+    spawn = active_spawns.get(channel.id)
+    if spawn is None or spawn["id"] != pokemon_id:
+        return
+    del active_spawns[channel.id]
+    pool = spawn["pool"]
+    winner_id = random.choice(pool)
+    add_catch(db, winner_id, spawn["id"], spawn["name"])
+    winner = await bot.fetch_user(winner_id)
+    await channel.send(f"{winner.display_name} caught {spawn['name']}! ({len(pool)} qualified)")
+
 @bot.command()
-@commands.cooldown(1,10, commands.BucketType.user)
+@commands.cooldown(1, 5, commands.BucketType.user)
 async def catch(ctx):
     spawn = active_spawns.get(ctx.channel.id)
     if spawn is None:
@@ -66,10 +80,17 @@ async def catch(ctx):
         await ctx.send(f"You've already caught {pokemon_name}!")
         return
 
+    if ctx.author.id in spawn["pool"]:
+        await ctx.send(f"You're already in the running for {pokemon_name}!")
+        return
+
     if random.random() < (spawn["capture_rate"] / 255):
-        add_catch(db, ctx.author.id, pokemon_id, pokemon_name)
-        del active_spawns[ctx.channel.id]
-        await ctx.send(f"You caught {pokemon_name}!")
+        spawn["pool"].append(ctx.author.id)
+        if len(spawn["pool"]) == 1:
+            asyncio.create_task(resolve_pool(ctx.channel, pokemon_id))
+            await ctx.send(f"You caught a glimpse of {pokemon_name}! Others have {CATCH_WINDOW}s to jump in!")
+        else:
+            await ctx.send(f"You caught a glimpse of {pokemon_name}! You're in the running — results in a bit.")
     else:
         chance = spawn["capture_rate"] / 255 * 100
         await ctx.send(f"{pokemon_name} broke free! Try again! You had a {chance:.1f}% chance.")
@@ -108,7 +129,7 @@ async def do_spawn(channel):
     capture_rate = get_capture_rate(pokemon_id)
     if capture_rate is None:
         return False
-    active_spawns[channel.id] = {"id":pokemon_id, "name": pokemon_name, "capture_rate": capture_rate}
+    active_spawns[channel.id] = {"id":pokemon_id, "name": pokemon_name, "capture_rate": capture_rate, "pool": []}
     await channel.send(sprite_url)
     await channel.send(f"A wild {pokemon_name} appeared! Type !catch to try to catch it.")
     return True
