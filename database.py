@@ -31,3 +31,7 @@ def get_pokedex(db, user_id):
     return sorted([(int(doc.id), doc.to_dict()["pokemon_name"]) 
                    for doc in catches],
                         key=lambda entry: entry[0])
+
+def get_leaderboard(db, limit=10):
+    users = db.collection("users").order_by("catch_count", direction=firestore.Query.DESCENDING).limit(limit).stream()
+    return [(doc.id, doc.to_dict().get("catch_count", 0)) for doc in users]

@@ -1,7 +1,7 @@
 import os, discord, random, traceback
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
-from database import init_db, has_caught, add_catch, get_pokedex
+from database import init_db, has_caught, add_catch, get_pokedex, get_leaderboard
 from pokeapi import get_pokemon_data, get_capture_rate
 
 
@@ -23,6 +23,9 @@ async def on_ready():
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"Slow down! Try again in {error.retry_after:.1f}s.")
         return
     traceback.print_exception(type(error), error, error.__traceback__)
     await ctx.send("Something went wrong running that command.")
@@ -50,6 +53,7 @@ async def skip(ctx):
         await ctx.send("Nothing is spawned right now.")
 
 @bot.command()
+@commands.cooldown(1,10, commands.BucketType.user)
 async def catch(ctx):
     spawn = active_spawns.get(ctx.channel.id)
     if spawn is None:
@@ -71,13 +75,26 @@ async def catch(ctx):
         await ctx.send(f"{pokemon_name} broke free! Try again! You had a {chance:.1f}% chance.")
 
 @bot.command()
-async def pokedex(ctx):
-    entries = get_pokedex(db,ctx.author.id)
+async def pokedex(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    entries = get_pokedex(db,member.id)
     if not entries:
-        await ctx.send("You haven't caught any Pokèmon yet!")
+        await ctx.send(f"{member.display_name} haven't caught any Pokèmon yet!")
         return
     lines = [f"#{pid} {name}" for pid, name in entries]
-    await ctx.send("Your Pokèdex:\n" + "\n".join(lines))
+    await ctx.send(f"{member.display_name} Pokèdex:\n" + "\n".join(lines))
+
+@bot.command()
+async def leaderboard(ctx):
+    entries = get_leaderboard(db)
+    if not entries:
+        await ctx.send("No one has caught any Pokèmon yet!")
+        return
+    lines = []
+    for i, (user_id, count) in enumerate(entries, start=1):
+        user = await bot.fetch_user(int(user_id))
+        lines.append(f"{i}, {user.display_name} - {count}")
+    await ctx.send("Leaderboard:\n" + "\n".join(lines))
 
 
 active_channel_id = None
